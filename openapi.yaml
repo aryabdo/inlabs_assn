@@ -1,14 +1,37 @@
 openapi: 3.1.0
 info:
-  title: INLABS DOU Middleware
+  title: INLABS DOU Middleware (Railway)
   version: 1.0.0
+  description: >
+    API intermediária para autenticar no INLABS (sessão limpa + login forçado) e
+    retornar publicações do DOU relevantes para transmissão.
+
 servers:
   - url: https://inlabsassn-production.up.railway.app
+
 paths:
+  /health:
+    get:
+      operationId: health
+      summary: Healthcheck do serviço
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                required: [ok]
+
   /dou/transmissao:
     post:
       operationId: buscar_dou_transmissao
-      summary: Autentica no INLABS (sessão limpa + login forçado) e retorna publicações relevantes p/ transmissão
+      summary: Autentica no INLABS e retorna publicações relevantes (metadados + inteiro teor)
+      security:
+        - api_key: []
       requestBody:
         required: false
         content:
@@ -18,52 +41,119 @@ paths:
               properties:
                 date:
                   type: string
-                  description: "Data no formato YYYY-MM-DD. Se omitido, usar DOU do dia; se não houver, última edição."
+                  description: Data no formato YYYY-MM-DD. Se omitido, o serviço define automaticamente.
+                  examples: ["2025-12-18"]
                 include_pdf:
                   type: boolean
-                  description: "Se true, o middleware pode retornar PDF em base64 (quando implementado)."
+                  description: Se true, o serviço pode retornar PDF em base64 quando implementado.
+                  default: true
               additionalProperties: false
       responses:
         "200":
-          description: OK
+          description: Sucesso
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  date_used: { type: string }
-                  edition_info: { type: string }
-                  source: { type: string, enum: [INLABS] }
-                  items:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        section: { type: string }
-                        organ: { type: string }
-                        act_type: { type: string }
-                        title: { type: string }
-                        url: { type: string }
-                        full_text: { type: string }
-                        triggers: { type: array, items: { type: string } }
-                        entities_matched: { type: array, items: { type: string } }
-                  pdf:
-                    type: object
-                    properties:
-                      filename: { type: string }
-                      content_base64: { type: string }
-                required: [date_used, items]
+                $ref: "#/components/schemas/DouResponse"
         "401":
-          description: Unauthorized
+          description: Não autorizado (API key inválida) ou falha de autenticação no INLABS
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "409":
-          description: Captcha/MFA detectado
+          description: Captcha/MFA/validação humana detectada (sem bypass)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
-          description: Erro interno
+          description: Erro interno / falha de coleta
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   securitySchemes:
     api_key:
       type: apiKey
       in: header
       name: X-API-Key
-security:
-  - api_key: []
+
+  schemas:
+    DouItem:
+      type: object
+      properties:
+        section:
+          type: string
+          description: Seção do DOU (Seção 1/2/3/Extra)
+        organ:
+          type: string
+          description: Órgão emissor
+        act_type:
+          type: string
+          description: Tipo de ato (Portaria, Despacho, Resolução etc.)
+        title:
+          type: string
+          description: Título/ementa
+        url:
+          type: string
+          description: Link oficial do item (quando disponível)
+        full_text:
+          type: string
+          description: Inteiro teor (texto)
+        triggers:
+          type: array
+          items:
+            type: string
+          description: Termos/gatilhos que dispararam a seleção
+        entities_matched:
+          type: array
+          items:
+            type: string
+          description: Entidades-alvo detectadas
+      required: [section, organ, act_type, title, full_text]
+
+    PdfPayload:
+      type: object
+      properties:
+        filename:
+          type: string
+        content_base64:
+          type: string
+          description: PDF em base64 (quando implementado)
+      required: [filename, content_base64]
+
+    DouResponse:
+      type: object
+      properties:
+        date_used:
+          type: string
+          description: Data efetivamente consultada (YYYY-MM-DD) ou AUTO
+        edition_info:
+          type: string
+          description: Informações da edição (quando implementado)
+        source:
+          type: string
+          enum: [INLABS]
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/DouItem"
+        pdf:
+          $ref: "#/components/schemas/PdfPayload"
+      required: [date_used, items, source]
+
+    ErrorResponse:
+      type: object
+      properties:
+        error_code:
+          type: string
+          description: Código do erro (ex.: UNAUTHORIZED, AUTH_INVALID, AUTH_REQUIRED_HUMAN, FETCH_FAIL)
+        message:
+          type: string
+        detail:
+          type: string
+          description: Detalhe opcional (não deve conter segredos)
+      required: [error_code, message]
