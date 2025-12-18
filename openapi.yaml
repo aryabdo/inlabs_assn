@@ -3,7 +3,7 @@ info:
   title: INLABS DOU Middleware
   version: 1.0.0
 servers:
-  - url: https://SEU-DOMINIO-RAILWAY-AQUI
+  - url: https://inlabsassn-production.up.railway.app
 paths:
   /dou/transmissao:
     post:
