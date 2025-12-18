@@ -25,8 +25,7 @@ function uniq(arr) {
   return [...new Set((arr || []).filter(Boolean))];
 }
 
-/** ====== Regras de filtro (estritas) ====== **/
-
+/** ===== Filtros ===== **/
 const ENTIDADES = [
   "ISA ENERGIA",
   "ISA ENERGIA BRASIL",
@@ -80,7 +79,6 @@ function matchInterligacoes(t) {
   if (t.includes("INTERLIGACAO ELETRICA")) {
     for (const n of INTER_NOMES) if (t.includes(n)) hits.push(`INTERLIGACAO ELETRICA + ${n}`);
   }
-  // IE como token (evita pegar parte de palavra)
   if (/\bIE\b/.test(t)) {
     for (const n of INTER_NOMES) if (t.includes(n)) hits.push(`IE + ${n}`);
   }
@@ -90,14 +88,11 @@ function matchInterligacoes(t) {
 function gatilhos(t) {
   const g = [];
 
-  // Entidades
   for (const e of ENTIDADES) if (t.includes(e)) g.push(`ENTIDADE:${e}`);
-
-  // Interligações
   g.push(...matchInterligacoes(t).map(x => `INTERLIG:${x}`));
 
-  // Gatilhos condicionais
   const hasAny = (arr) => arr.some(x => t.includes(x));
+
   if (t.includes("DESPACHO") && hasAny(TERMOS_SETOR)) g.push("DESPACHO_SETOR");
   if (t.includes("PORTARIA") && hasAny(TERMOS_SETOR)) g.push("PORTARIA_SETOR");
 
@@ -108,21 +103,17 @@ function gatilhos(t) {
 
   if (t.includes("RETIFICACAO") && hasAny(["LEILAO", ...TERMOS_SETOR])) g.push("RETIFICACAO_SETOR");
 
-  // REIDI só infra elétrica (regra anti-gás)
   if (t.includes("REIDI") && hasAny(["ENERGIA ELETRICA","TRANSMISSAO","GERACAO","SUBESTACAO","CCEE","ONS"])) {
     const antiGas = ["GASODUTO","GAS","DISTRIBUIDORA DE GAS","COMBUSTIVEL","OLEO"];
     if (!antiGas.some(x => t.includes(x))) g.push("REIDI_ELETRICO");
   }
 
-  // Termos típicos “puros”
   for (const k of TERMOS_TIPICOS) if (t.includes(k)) g.push(`TERMO:${k}`);
 
-  // Leilões
   if (t.includes("LEILAO") && (t.includes("ANEEL") || t.includes("ENERGIA ELETRICA") || t.includes("SETOR ELETRICO"))) g.push("LEILAO_ELETRICO");
   if (t.includes("LEILAO") && t.includes("TRANSMISSAO")) g.push("LEILAO_TRANSMISSAO");
   if (t.includes("RESERVA DE CAPACIDADE")) g.push("RESERVA_CAPACIDADE");
 
-  // Chamadas P&D/eficiência
   if (t.includes("CHAMADA PUBLICA") && (t.includes("ANEEL") || t.includes("P&D") || t.includes("PESQUISA E DESENVOLVIMENTO") || t.includes("EFICIENCIA ENERGETICA"))) {
     g.push("CHAMADA_PD_EFIC");
   }
@@ -134,32 +125,24 @@ function entidadesMatchedFromTriggers(trigs) {
   return uniq(trigs.filter(x => x.startsWith("ENTIDADE:")).map(x => x.replace("ENTIDADE:","")));
 }
 
-/**
- * Critério final:
- * - Se há entidade/interligação => inclui
- * - Senão: precisa ter gatilho setorial E ter “cara de transmissão”
- *   (ou LRCAP/reserva capacidade, que é relevante por si)
- */
 function isRelevant(tNorm, trigs) {
   const hasEnt = trigs.some(x => x.startsWith("ENTIDADE:")) || trigs.some(x => x.startsWith("INTERLIG:"));
   if (hasEnt) return true;
 
-  const hasCore = trigs.some(x =>
-    ["DESPACHO_SETOR","PORTARIA_SETOR","AUDIENCIA_PUBLICA_SETOR","CONSULTA_PUBLICA_SETOR","CONSULTA_EXTERNA_SETOR","TOMADA_SUBSIDIOS_SETOR","RETIFICACAO_SETOR","REIDI_ELETRICO","LEILAO_ELETRICO","LEILAO_TRANSMISSAO","RESERVA_CAPACIDADE"]
-      .includes(x)
-  ) || trigs.some(x => x.startsWith("TERMO:"));
+  const hasCore =
+    trigs.some(x =>
+      ["DESPACHO_SETOR","PORTARIA_SETOR","AUDIENCIA_PUBLICA_SETOR","CONSULTA_PUBLICA_SETOR","CONSULTA_EXTERNA_SETOR","TOMADA_SUBSIDIOS_SETOR","RETIFICACAO_SETOR","REIDI_ELETRICO","LEILAO_ELETRICO","LEILAO_TRANSMISSAO","RESERVA_CAPACIDADE"].includes(x)
+    ) || trigs.some(x => x.startsWith("TERMO:"));
 
   if (!hasCore) return false;
 
-  // “Cara de transmissão” (heurística)
   const isStorageOrCap = tNorm.includes("LRCAP") || tNorm.includes("ARMAZENAMENTO") || tNorm.includes("RESERVA DE CAPACIDADE");
   if (isStorageOrCap) return true;
 
   return TERMOS_TRANSMISSAO_CONTEXT.some(k => tNorm.includes(k));
 }
 
-/** ====== Extração de texto de ZIP ====== **/
-
+/** ===== Extração ZIP ===== **/
 const xmlParser = new XMLParser({
   ignoreAttributes: true,
   removeNSPrefix: true,
@@ -177,7 +160,6 @@ function stripTags(s) {
 }
 
 function flattenText(obj, limit = 800000) {
-  // concatena strings encontradas no objeto
   const out = [];
   const stack = [obj];
   while (stack.length && out.join(" ").length < limit) {
@@ -198,11 +180,6 @@ function flattenText(obj, limit = 800000) {
   return out.join(" ").replace(/\s+/g, " ").trim();
 }
 
-/**
- * Heurística para “quebrar” um XML/HTML gigante em itens:
- * - se XML parsear, tenta encontrar múltiplas entradas repetidas (materia/matéria)
- * - senão, usa separadores de cabeçalho (“PORTARIA”, “DESPACHO”, “RESOLUÇÃO”, etc.)
- */
 function splitIntoItemsFromText(text) {
   const t = (text || "").replace(/\r/g, "\n");
   const markers = [
@@ -212,30 +189,22 @@ function splitIntoItemsFromText(text) {
     "\nTOMADA DE SUBSIDIOS", "\nTOMADA DE SUBSÍDIOS"
   ];
 
-  // tenta partir por markers (mantendo o marker)
   let parts = [t];
   for (const m of markers) {
     const newParts = [];
     for (const p of parts) {
-      const idxs = [];
-      let idx = p.toUpperCase().indexOf(m.trim().toUpperCase());
-      if (idx > 0) {
-        // split simples: só se houver múltiplos markers
-        const re = new RegExp(m.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig");
-        const chunks = p.split(re);
-        if (chunks.length > 1) {
-          // recoloca marker no início de cada chunk (exceto primeiro)
-          newParts.push(chunks[0]);
-          for (let i = 1; i < chunks.length; i++) newParts.push(m.trim() + chunks[i]);
-          continue;
-        }
+      const re = new RegExp(m.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig");
+      const chunks = p.split(re);
+      if (chunks.length > 1) {
+        newParts.push(chunks[0]);
+        for (let i = 1; i < chunks.length; i++) newParts.push(m.trim() + chunks[i]);
+      } else {
+        newParts.push(p);
       }
-      newParts.push(p);
     }
     parts = newParts;
   }
 
-  // limpa e remove muito pequenos
   return parts.map(x => x.replace(/\s+/g, " ").trim()).filter(x => x.length > 600);
 }
 
@@ -253,7 +222,6 @@ function extractCandidatesFromZip(buffer, fileOrigin) {
     const raw = e.getData().toString("utf-8");
     let text = raw;
 
-    // Se parece XML/HTML, tenta parsear
     if (name.endsWith(".xml")) {
       try {
         const parsed = xmlParser.parse(raw);
@@ -266,17 +234,12 @@ function extractCandidatesFromZip(buffer, fileOrigin) {
       text = stripTags(raw);
     }
 
-    // quebrar em “itens” para filtrar granularmente
     const parts = splitIntoItemsFromText(text);
     for (const p of parts) {
-      candidates.push({
-        file_origin: `${fileOrigin}::${e.entryName}`,
-        text: p
-      });
+      candidates.push({ file_origin: `${fileOrigin}::${e.entryName}`, text: p });
     }
   }
 
-  // fallback: se não achou nada, tenta ao menos indexar o zip inteiro como 1 candidato
   if (candidates.length === 0) {
     const allNames = entries.filter(x => !x.isDirectory).map(x => x.entryName).slice(0, 50).join(", ");
     candidates.push({
@@ -288,7 +251,7 @@ function extractCandidatesFromZip(buffer, fileOrigin) {
   return candidates;
 }
 
-/** ====== PDF ====== **/
+/** ===== PDF ===== **/
 async function buildPdfBase64(items, dateUsed) {
   return await new Promise((resolve, reject) => {
     try {
@@ -299,11 +262,10 @@ async function buildPdfBase64(items, dateUsed) {
         const buf = Buffer.concat(chunks);
         resolve({
           filename: `DOU_Transmissao_${dateUsed}.pdf`,
-          content_base64: buf.toString("base64")
+          content_base64: buf.toString("base64"),
         });
       });
 
-      // Capa
       doc.addPage();
       doc.fontSize(18).text("DOU – Dossiê (Transmissão)", { align: "center" });
       doc.moveDown(0.5);
@@ -311,20 +273,17 @@ async function buildPdfBase64(items, dateUsed) {
       doc.moveDown(1.5);
       doc.fontSize(10).text(`Itens incluídos: ${items.length}`, { align: "center" });
 
-      // Itens
       for (const it of items) {
         doc.addPage();
         doc.fontSize(12).text(it.title || "Publicação", { underline: true });
         doc.moveDown(0.3);
-        doc.fontSize(9).text(`Órgão: ${it.organ || "N/D"}`);
-        doc.fontSize(9).text(`Tipo: ${it.act_type || "N/D"} | Seção: ${it.section || "N/D"}`);
+        doc.fontSize(9).text(`Seção: ${it.section || "N/D"} | Tipo: ${it.act_type || "N/D"}`);
         doc.fontSize(9).text(`Origem: ${it.file_origin || "N/D"}`);
-        if (it.url) doc.fontSize(9).text(`URL: ${it.url}`);
-        doc.moveDown(0.5);
+        doc.moveDown(0.4);
         doc.fontSize(9).text(`Triggers: ${(it.triggers || []).join("; ")}`);
         doc.fontSize(9).text(`Entidades: ${(it.entities_matched || []).join("; ")}`);
         doc.moveDown(0.8);
-        doc.fontSize(9).text(it.full_text || "", { align: "left" });
+        doc.fontSize(9).text(it.full_text || "");
       }
 
       doc.end();
@@ -334,7 +293,12 @@ async function buildPdfBase64(items, dateUsed) {
   });
 }
 
-/** ====== Navegação INLABS (pasta de datas e arquivos) ====== **/
+/** ===== Navegação + Download ===== **/
+async function fetchBinary(page, absoluteUrl) {
+  const resp = await page.request.get(absoluteUrl, { timeout: 120000 });
+  if (!resp.ok()) throw new Error(`Falha ao baixar ${absoluteUrl} (${resp.status()})`);
+  return await resp.body();
+}
 
 function isDateFolderName(s) {
   return /^\d{4}-\d{2}-\d{2}$/.test((s || "").trim());
@@ -349,39 +313,21 @@ function guessSectionFromFilename(nameUpper) {
 
 function guessActType(textNorm) {
   const types = [
-    "RESOLUCAO NORMATIVA",
-    "RESOLUCAO AUTORIZATIVA",
-    "RESOLUCAO HOMOLOGATORIA",
-    "RESOLUCAO",
-    "PORTARIA",
-    "DESPACHO",
-    "EDITAL",
-    "AVISO",
-    "INSTRUCAO NORMATIVA",
-    "RETIFICACAO",
-    "AUDIENCIA PUBLICA",
-    "CONSULTA PUBLICA",
-    "TOMADA DE SUBSIDIOS"
+    "RESOLUCAO NORMATIVA","RESOLUCAO AUTORIZATIVA","RESOLUCAO HOMOLOGATORIA",
+    "RESOLUCAO","PORTARIA","DESPACHO","EDITAL","AVISO","INSTRUCAO NORMATIVA",
+    "RETIFICACAO","AUDIENCIA PUBLICA","CONSULTA PUBLICA","TOMADA DE SUBSIDIOS"
   ];
   for (const t of types) if (textNorm.includes(t)) return t;
   return "ATO";
 }
 
 function guessTitle(text) {
-  // pega a primeira linha “forte” como título
   const lines = (text || "").split(/\n|\r/).map(x => x.trim()).filter(Boolean);
   if (!lines.length) return "Publicação";
   return lines[0].slice(0, 180);
 }
 
-async function fetchBinary(page, absoluteUrl) {
-  const resp = await page.request.get(absoluteUrl, { timeout: 120000 });
-  if (!resp.ok()) throw new Error(`Falha ao baixar: ${absoluteUrl} (${resp.status()})`);
-  const buf = await resp.body(); // Buffer
-  return buf;
-}
-
-/** ====== Login (form logar.php) ====== **/
+/** ===== Login ===== **/
 async function loginInlabs(page, { user, pass }) {
   await page.goto("https://inlabs.in.gov.br/acessar.php", {
     waitUntil: "domcontentloaded",
@@ -402,7 +348,6 @@ async function loginInlabs(page, { user, pass }) {
 
   await loginForm.locator("#email").fill(user);
   await loginForm.locator("#password").fill(pass);
-
   const submitBtn = loginForm.locator("input[type='submit'][value='Logar']").first();
 
   await Promise.allSettled([
@@ -410,13 +355,11 @@ async function loginInlabs(page, { user, pass }) {
     submitBtn.click({ timeout: 30000 }),
   ]);
 
-  // sucesso: aparece “Sair” (como na sua tela)
   const hasSair =
     (await page.locator("text=/\\bSair\\b/i").count()) > 0 ||
     (await page.locator("a:has-text('Sair')").count()) > 0;
 
   if (!hasSair) {
-    // sem inferir por “Senha” (label). tenta captar alertas
     const alertText = (await page.locator(".alert, .text-danger").allTextContents().catch(() => []))
       .join(" | ")
       .trim();
@@ -432,28 +375,29 @@ async function loginInlabs(page, { user, pass }) {
   return { ok: true };
 }
 
-/** ====== Endpoint principal ====== **/
+/** ===== Endpoint ===== **/
 app.post("/dou/transmissao", async (req, res) => {
   let browser = null;
   let context = null;
+  let stage = "init";
 
   try {
-    // Auth do middleware
+    stage = "auth_middleware";
     const apiKey = req.header("X-API-Key");
     if (!apiKey || apiKey !== process.env.MIDDLEWARE_API_KEY) {
       return res.status(401).json({ error_code: "UNAUTHORIZED", message: "API key inválida." });
     }
 
-    const requestedDate = (req.body?.date || "").trim(); // YYYY-MM-DD
+    const requestedDate = (req.body?.date || "").trim();
     const includePdf = req.body?.include_pdf ?? true;
 
     const user = (process.env.INLABS_USER || "").trim();
     const pass = (process.env.INLABS_PASS || "").trim();
-
     if (!user || !pass) {
       return res.status(500).json({ error_code: "CONFIG_FAIL", message: "INLABS_USER/INLABS_PASS não configurados." });
     }
 
+    stage = "launch_browser";
     browser = await chromium.launch({
       headless: true,
       args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"]
@@ -470,93 +414,76 @@ app.post("/dou/transmissao", async (req, res) => {
 
     const page = await context.newPage();
 
-    // 1) Login
+    stage = "login_inlabs";
     const login = await loginInlabs(page, { user, pass });
     if (!login.ok) {
       const status = login.code === "AUTH_REQUIRED_HUMAN" ? 409 : 401;
       return res.status(status).json({ error_code: login.code, message: login.message, debug: login.debug });
     }
 
-    // 2) Ir para a “raiz” que lista as pastas por data
-    // Em geral, após login o INLABS já cai nessa listagem. Se não, force a origem.
-    // (mantém sessão/cookies)
+    stage = "list_date_folders";
+    // após login, normalmente já está na listagem de pastas; se não estiver, tenta ir para raiz do origin
     const origin = new URL(page.url()).origin;
     await page.goto(origin + "/", { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
-    // Se não for listagem, seguimos com a página atual mesmo.
 
-    // 3) Listar pastas com nome YYYY-MM-DD
-    const folders = await page.$$eval("a", (as) => {
-      return as
+    const folders = await page.$$eval("a", (as) =>
+      as
         .map(a => ({ text: (a.textContent || "").trim(), href: a.getAttribute("href") }))
-        .filter(x => x.text && x.href);
-    });
-
-    const dateFolders = folders
-      .map(x => ({ ...x, name: x.text }))
-      .filter(x => /^\d{4}-\d{2}-\d{2}$/.test(x.name));
-
-    if (dateFolders.length === 0) {
-      return res.status(500).json({
-        error_code: "PARSE_FAIL",
-        message: "Não foi possível localizar a lista de pastas por data após o login."
-      });
-    }
-
-    // 4) Determinar date_used
-    let dateUsed = requestedDate && isDateFolderName(requestedDate) ? requestedDate : null;
-    if (!dateUsed) {
-      // pega a “maior” data (lexicograficamente funciona em YYYY-MM-DD)
-      dateUsed = dateFolders.map(x => x.name).sort().reverse()[0];
-    } else {
-      const exists = dateFolders.some(x => x.name === dateUsed);
-      if (!exists) {
-        // fallback para última disponível
-        dateUsed = dateFolders.map(x => x.name).sort().reverse()[0];
-      }
-    }
-
-    // 5) Entrar na pasta da data
-    // Usa link exato pelo texto
-    await page.getByRole("link", { name: dateUsed, exact: true }).click({ timeout: 30000 });
-    await page.waitForLoadState("domcontentloaded");
-
-    // 6) Listar arquivos dentro da pasta
-    const files = await page.$$eval("a[href]", (as) => {
-      return as
-        .map(a => ({
-          text: (a.textContent || "").trim(),
-          href: a.getAttribute("href"),
-        }))
         .filter(x => x.text && x.href)
-        .filter(x => x.text !== ".." && x.text !== "."); // navegação
-    });
+    );
 
-    // Preferir ZIPs (muito menores que PDFs)
-    const zipFiles = files
+    const dateFolders = folders.filter(x => /^\d{4}-\d{2}-\d{2}$/.test(x.text));
+    if (dateFolders.length === 0) {
+      return res.status(500).json({ error_code: "PARSE_FAIL", message: "Não localizei pastas por data após login.", stage });
+    }
+
+    let dateUsed = requestedDate && isDateFolderName(requestedDate) ? requestedDate : null;
+    const datesAvailable = dateFolders.map(x => x.text).sort().reverse();
+
+    if (!dateUsed) dateUsed = datesAvailable[0];
+    if (!datesAvailable.includes(dateUsed)) dateUsed = datesAvailable[0];
+
+    const folderObj = dateFolders.find(x => x.text === dateUsed) || dateFolders.find(x => x.text === datesAvailable[0]);
+    if (!folderObj) {
+      return res.status(500).json({ error_code: "PARSE_FAIL", message: "Não consegui resolver o link da pasta da data.", stage });
+    }
+
+    stage = "enter_date_folder";
+    const folderUrl = new URL(folderObj.href, page.url()).toString();
+    await page.goto(folderUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+
+    stage = "list_files";
+    const fileLinks = await page.$$eval("a[href]", (as) =>
+      as
+        .map(a => ({ text: (a.textContent || "").trim(), href: a.getAttribute("href") }))
+        .filter(x => x.text && x.href && x.text !== ".." && x.text !== ".")
+    );
+
+    const zipFiles = fileLinks
       .filter(x => x.text.toLowerCase().endsWith(".zip"))
       .map(x => ({
         name: x.text,
-        url: new URL(x.href, document.baseURI).toString()
+        url: new URL(x.href, page.url()).toString()  // <<< CORREÇÃO: sem document.baseURI
       }));
 
     if (zipFiles.length === 0) {
       return res.status(500).json({
         error_code: "FETCH_FAIL",
-        message: "Nenhum arquivo .zip encontrado na pasta da data. (No momento este middleware depende dos ZIPs.)",
-        date_used: dateUsed
+        message: "Nenhum .zip encontrado dentro da pasta da data.",
+        date_used: dateUsed,
+        stage
       });
     }
 
-    // 7) Baixar e extrair candidatos
+    stage = "download_and_extract";
     const candidates = [];
     for (const z of zipFiles) {
-      const abs = new URL(z.name, page.url()).toString(); // muitos file-browsers usam href relativo = nome
-      const bin = await fetchBinary(page, abs);
+      const bin = await fetchBinary(page, z.url);   // <<< CORREÇÃO: usa url real do link
       const c = extractCandidatesFromZip(bin, z.name);
       candidates.push(...c);
     }
 
-    // 8) Filtrar candidatos
+    stage = "filter_items";
     const maxChars = Number(process.env.FULL_TEXT_MAX_CHARS || 400000);
 
     const items = [];
@@ -564,21 +491,18 @@ app.post("/dou/transmissao", async (req, res) => {
       const t = c.text || "";
       const tNorm = norm(t);
       const trigs = gatilhos(tNorm);
-
       if (!isRelevant(tNorm, trigs)) continue;
 
       const entities = entidadesMatchedFromTriggers(trigs);
-
       const actType = guessActType(tNorm);
       const title = guessTitle(t);
       const section = guessSectionFromFilename(norm(c.file_origin || ""));
 
-      const fullText =
-        t.length > maxChars ? t.slice(0, maxChars) + "\n\n[...TRUNCADO POR LIMITE...]" : t;
+      const fullText = t.length > maxChars ? t.slice(0, maxChars) + "\n\n[...TRUNCADO...]" : t;
 
       items.push({
         section,
-        organ: null, // pode ser refinado quando tivermos o padrão do XML (ex.: tags de órgão)
+        organ: null,
         act_type: actType,
         title,
         url: null,
@@ -599,7 +523,7 @@ app.post("/dou/transmissao", async (req, res) => {
       });
     }
 
-    // 9) PDF opcional
+    stage = "pdf_optional";
     let pdf = undefined;
     if (includePdf) {
       pdf = await buildPdfBase64(items, dateUsed);
@@ -616,7 +540,9 @@ app.post("/dou/transmissao", async (req, res) => {
   } catch (e) {
     return res.status(500).json({
       error_code: "FETCH_FAIL",
-      message: "Falha geral no middleware."
+      message: "Falha geral no middleware.",
+      stage,
+      detail: `${e?.name || "Error"}: ${(e?.message || "").slice(0, 200)}`
     });
   } finally {
     await safeClose(context);
@@ -624,6 +550,5 @@ app.post("/dou/transmissao", async (req, res) => {
   }
 });
 
-// Railway injeta a porta em process.env.PORT
 const port = Number(process.env.PORT || 8080);
 app.listen(port, "0.0.0.0", () => console.log(`listening:${port}`));
