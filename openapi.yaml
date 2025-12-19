@@ -1,159 +1,375 @@
-openapi: 3.1.0
-info:
-  title: INLABS DOU Middleware (Railway)
-  version: 1.0.0
-  description: >
-    API intermediária para autenticar no INLABS (sessão limpa + login forçado) e
-    retornar publicações do DOU relevantes para transmissão.
-
-servers:
-  - url: https://inlabsassn-production.up.railway.app
-
-paths:
-  /health:
-    get:
-      operationId: health
-      summary: Healthcheck do serviço
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                required: [ok]
-
-  /dou/transmissao:
-    post:
-      operationId: buscar_dou_transmissao
-      summary: Autentica no INLABS e retorna publicações relevantes (metadados + inteiro teor)
-      security:
-        - api_key: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                date:
-                  type: string
-                  description: Data no formato YYYY-MM-DD. Se omitido, o serviço define automaticamente.
-                  examples: ["2025-12-18"]
-                include_pdf:
-                  type: boolean
-                  description: Se true, o serviço pode retornar PDF em base64 quando implementado.
-                  default: true
-              additionalProperties: false
-      responses:
-        "200":
-          description: Sucesso
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DouResponse"
-        "401":
-          description: Não autorizado (API key inválida) ou falha de autenticação no INLABS
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "409":
-          description: Captcha/MFA/validação humana detectada (sem bypass)
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Erro interno / falha de coleta
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-components:
-  securitySchemes:
-    api_key:
-      type: apiKey
-      in: header
-      name: X-API-Key
-
-  schemas:
-    DouItem:
-      type: object
-      properties:
-        section:
-          type: string
-          description: Seção do DOU (Seção 1/2/3/Extra)
-        organ:
-          type: string
-          description: Órgão emissor
-        act_type:
-          type: string
-          description: Tipo de ato (Portaria, Despacho, Resolução etc.)
-        title:
-          type: string
-          description: Título/ementa
-        url:
-          type: string
-          description: Link oficial do item (quando disponível)
-        full_text:
-          type: string
-          description: Inteiro teor (texto)
-        triggers:
-          type: array
-          items:
-            type: string
-          description: Termos/gatilhos que dispararam a seleção
-        entities_matched:
-          type: array
-          items:
-            type: string
-          description: Entidades-alvo detectadas
-      required: [section, organ, act_type, title, full_text]
-
-    PdfPayload:
-      type: object
-      properties:
-        filename:
-          type: string
-        content_base64:
-          type: string
-          description: PDF em base64 (quando implementado)
-      required: [filename, content_base64]
-
-    DouResponse:
-      type: object
-      properties:
-        date_used:
-          type: string
-          description: Data efetivamente consultada (YYYY-MM-DD) ou AUTO
-        edition_info:
-          type: string
-          description: Informações da edição (quando implementado)
-        source:
-          type: string
-          enum: [INLABS]
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/DouItem"
-        pdf:
-          $ref: "#/components/schemas/PdfPayload"
-      required: [date_used, items, source]
-
-    ErrorResponse:
-      type: object
-      properties:
-        error_code:
-          type: string
-          description: Código do erro (ex.: UNAUTHORIZED, AUTH_INVALID, AUTH_REQUIRED_HUMAN, FETCH_FAIL)
-        message:
-          type: string
-        detail:
-          type: string
-          description: Detalhe opcional (não deve conter segredos)
-      required: [error_code, message]
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "INLABS DOU Middleware",
+    "version": "1.2.0",
+    "description": "Index leve (snippets) + endpoint de detalhe por item."
+  },
+  "servers": [
+    {
+      "url": "https://inlabsassn-production.up.railway.app"
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "health",
+        "summary": "Healthcheck",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/dou/transmissao": {
+      "post": {
+        "operationId": "buscar_dou_transmissao",
+        "summary": "Index leve: lista itens relevantes (snippet)",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IndexRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndexResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Captcha/valida\u00e7\u00e3o humana",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Erro interno",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/dou/item": {
+      "post": {
+        "operationId": "buscar_item_dou",
+        "summary": "Detalhe: full_text (plain) de um item",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Captcha/valida\u00e7\u00e3o humana",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Erro interno",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key"
+      }
+    },
+    "schemas": {
+      "HealthResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ]
+      },
+      "IndexRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "date": {
+            "type": "string",
+            "description": "YYYY-MM-DD. Se omitido, usa a \u00faltima pasta dispon\u00edvel."
+          },
+          "max_items": {
+            "type": "integer",
+            "default": 40
+          },
+          "max_zips": {
+            "type": "integer",
+            "default": 6
+          },
+          "snippet_max_chars": {
+            "type": "integer",
+            "default": 900
+          }
+        }
+      },
+      "IndexItem": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "zip_name": {
+            "type": "string"
+          },
+          "entry_name": {
+            "type": "string"
+          },
+          "section": {
+            "type": "string"
+          },
+          "act_type": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "snippet": {
+            "type": "string"
+          },
+          "triggers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "entities_matched": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "zip_name",
+          "entry_name",
+          "section",
+          "act_type",
+          "title",
+          "snippet",
+          "triggers",
+          "entities_matched"
+        ]
+      },
+      "IndexResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "date_used": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IndexItem"
+            }
+          }
+        },
+        "required": [
+          "date_used",
+          "source",
+          "items"
+        ]
+      },
+      "ItemRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "date": {
+            "type": "string"
+          },
+          "zip_name": {
+            "type": "string"
+          },
+          "entry_name": {
+            "type": "string"
+          },
+          "full_text_max_chars": {
+            "type": "integer",
+            "default": 250000
+          }
+        },
+        "required": [
+          "date",
+          "zip_name",
+          "entry_name"
+        ]
+      },
+      "ItemResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "full_text": {
+            "type": "string"
+          },
+          "full_text_truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "full_text",
+          "full_text_truncated"
+        ]
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "error_code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "stage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "error_code",
+          "message"
+        ]
+      }
+    }
+  }
+}
