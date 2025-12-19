@@ -1,68 +1,28 @@
-# inlabs_assn
+# inlabs_assn (Railway)
 
-Middleware HTTP para autenticar no INLABS (DOU) com **sessão limpa + login forçado** usando Playwright,
-e expor um endpoint REST que o ChatGPT (Custom Action) consegue chamar.
-
-> **Segurança**
-> - NÃO coloque credenciais no código.
-> - Configure as variáveis no Railway: `INLABS_USER`, `INLABS_PASS`, `MIDDLEWARE_API_KEY`.
-> - O endpoint exige `X-API-Key`.
+Middleware HTTP para integração INLABS/DOU com GPT Actions sem estourar limite de resposta.
 
 ## Endpoints
+- POST /dou/transmissao  -> index leve (snippet + metadados)
+- POST /dou/item         -> detalhe (full_text) de 1 entry
 
-- `GET /health` → `{ ok: true }`
-- `POST /dou/transmissao` → Busca o DOU via INLABS (placeholder de coleta; login implementado)
+## Variáveis (Railway -> Variables)
+- INLABS_USER
+- INLABS_PASS
+- MIDDLEWARE_API_KEY
 
-### POST /dou/transmissao
-**Headers**
-- `X-API-Key: <sua chave>`
-- `Content-Type: application/json`
+## Testes
+Health:
+curl -sS https://SEU-DOMINIO/health
 
-**Body (opcional)**
-```json
-{ "date": "YYYY-MM-DD", "include_pdf": true }
-```
-
-**Resposta (200)**
-```json
-{
-  "date_used": "YYYY-MM-DD|AUTO",
-  "edition_info": "TODO",
-  "source": "INLABS",
-  "items": []
-}
-```
-
-## Rodando localmente (opcional)
-Requer Node 18+.
-
-```bash
-npm install
-export INLABS_USER="..."
-export INLABS_PASS="..."
-export MIDDLEWARE_API_KEY="uma-chave-forte"
-export PORT=8080
-npm start
-```
-
-Teste:
-```bash
-curl -sS -X POST "http://localhost:8080/dou/transmissao" \
+Index leve:
+curl -sS -X POST https://SEU-DOMINIO/dou/transmissao \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: $MIDDLEWARE_API_KEY" \
-  -d '{"date":"2025-12-18"}'
-```
+  -H "X-API-Key: SUA_KEY" \
+  -d '{"date":"2025-12-18","max_items":25,"snippet_max_chars":900,"max_zips":6}'
 
-## Deploy no Railway (resumo)
-1. Crie um projeto no Railway e faça **Deploy from GitHub Repo**.
-2. Garanta que o Railway detectou o `Dockerfile`.
-3. Em **Variables**, configure:
-   - `INLABS_USER`
-   - `INLABS_PASS`
-   - `MIDDLEWARE_API_KEY`
-4. Em **Settings → Networking**, habilite **Public Networking** e gere um domínio.
-5. Teste com curl usando o domínio público.
-
-## Custom Action (OpenAPI)
-Use o arquivo `openapi.yaml` no GPT Builder. No campo `servers.url`, coloque seu domínio público do Railway.
-Autenticação: **API Key** via header `X-API-Key`.
+Detalhe de item:
+curl -sS -X POST https://SEU-DOMINIO/dou/item \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: SUA_KEY" \
+  -d '{"date":"2025-12-18","zip_name":"2025-12-18-DO1.zip","entry_name":"515_20251218_23434977.xml"}'
